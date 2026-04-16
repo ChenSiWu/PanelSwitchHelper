@@ -290,6 +290,8 @@ class PanelSwitchLayout : LinearLayout, ViewAssertion {
     private var lastContentHeight: Int? = null
     private var lastNavigationBarShow: Boolean? = null
     private var lastKeyboardHeight: Int = 0
+    // 缓存最后一次合法的（非负）localLocation[1]，用于修复 ADJUST_PAN 导致负值的问题
+    private var stableTopY: Int = -1
     private val minLimitOpenKeyboardHeight by lazy { KeyboardHeightCompat.getMinLimitHeight() }
     private var minLimitCloseKeyboardHeight: Int = 0
     private var keyboardAnimationFeature = false     // 是否使用Android 11键盘动画特性
@@ -769,7 +771,17 @@ class PanelSwitchLayout : LinearLayout, ViewAssertion {
             }
 
             val localLocation = getLocationOnScreen(this)
-            allHeight -= localLocation[1]
+            // 部分 OEM 设备（如 vivo Android 16）在设置 ADJUST_RESIZE 时，系统实际执行 ADJUST_PAN，
+            // 将 view 向上平移导致 getLocationOnScreen 返回负值，allHeight 会被虚胀。
+            // 修复：缓存最后一次合法的（非负）localLocation[1]，作为 ADJUST_PAN 时的回退值。
+            // 此方案兼容所有场景（普通、全屏、沉浸式、edge-to-edge）：
+            //   - 合法值（>=0）会被实时缓存并直接使用
+            //   - 非法值（<0，即 ADJUST_PAN 已发生）时回退到缓存的 pan 前坐标
+            val currentTopY = localLocation[1]
+            if (currentTopY >= 0) {
+                stableTopY = currentTopY
+            }
+            allHeight -= if (currentTopY < 0 && stableTopY >= 0) stableTopY else currentTopY.coerceAtLeast(0)
             var contentContainerTop = getContentContainerTop(compatPanelHeight)
             contentContainerTop += paddingTop
             val contentContainerHeight = getContentContainerHeight(allHeight, paddingTop, compatPanelHeight)
